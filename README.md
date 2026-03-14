@@ -10,7 +10,7 @@ Longer term, the tool is intended to support region-based take explosion, marker
 
 ## Project Layout
 
-- `scripts/copy_item_to_project_end.lua` - current working prototype script
+- `copy_item_to_project_end.lua` - current working prototype script
 - `deploy.ps1` - copies the script into REAPER's Lua directory
 - `.vscode/settings.json` - Lua language support configuration for REAPER scripting
 
