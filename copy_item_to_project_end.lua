@@ -338,6 +338,21 @@ local function explode_takes_to_project_end(comp_items, target_pos, region_start
     return true
 end
 
+-- Create a region covering the full exploded take area.
+local function create_exploded_takes_region(comp_items, target_pos, region_start, region_end)
+    local take_count = get_shared_usable_take_count(comp_items)
+    local region_length_qn = get_region_length_qn(region_start, region_end)
+    local target_qn = reaper.TimeMap2_timeToQN(0, target_pos)
+    local exploded_end_qn = target_qn + (take_count * region_length_qn)
+    local exploded_end_pos = reaper.TimeMap2_QNToTime(0, exploded_end_qn)
+    local yellow = reaper.ColorToNative(255, 255, 0) | 0x1000000
+    local source_track = reaper.GetMediaItemTrack(comp_items[1].item)
+    local _, track_name = reaper.GetTrackName(source_track)
+    local region_name = "Exploded Takes - " .. track_name
+
+    reaper.AddProjectMarker2(0, true, target_pos, exploded_end_pos, region_name, -1, yellow)
+end
+
 -- Main entry point for the script.
 local function main()
     local item = get_selected_item()
@@ -368,6 +383,10 @@ local function main()
     reaper.PreventUIRefresh(1)
 
     local ok = explode_takes_to_project_end(comp_items, target_pos, region_start, region_end, backing_items)
+
+    if ok then
+        create_exploded_takes_region(comp_items, target_pos, region_start, region_end)
+    end
 
     reaper.PreventUIRefresh(-1)
     reaper.UpdateArrange()
