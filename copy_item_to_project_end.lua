@@ -125,6 +125,54 @@ local function item_overlaps_region(item, region_start, region_end)
     return item_start < region_end and item_end > region_start
 end
 
+-- Collect comp items on the source track that overlap the source region.
+local function collect_comp_items(source_item, region_start, region_end)
+    local comp_items = {}
+    local source_track = reaper.GetMediaItemTrack(source_item)
+    local track_item_count = reaper.CountTrackMediaItems(source_track)
+
+    for item_index = 0, track_item_count - 1 do
+        local item = reaper.GetTrackMediaItem(source_track, item_index)
+
+        if item_overlaps_region(item, region_start, region_end) then
+            local item_start, item_end = get_item_bounds(item)
+            local overlap_start = math.max(item_start, region_start)
+            local overlap_end = math.min(item_end, region_end)
+            comp_items[#comp_items + 1] = {
+                item = item,
+                offset = overlap_start - region_start,
+                trim_start_delta = overlap_start - item_start,
+                length = overlap_end - overlap_start,
+                take_count = get_take_count(item)
+            }
+        end
+    end
+
+    table.sort(comp_items, function(a, b)
+        if a.offset == b.offset then
+            return a.trim_start_delta < b.trim_start_delta
+        end
+        return a.offset < b.offset
+    end)
+
+    return comp_items
+end
+
+-- Return the shared take count when all comp items match.
+local function get_shared_take_count(comp_items)
+    local shared_take_count = nil
+
+    for _, comp in ipairs(comp_items) do
+        if shared_take_count == nil then
+            shared_take_count = comp.take_count
+        elseif comp.take_count ~= shared_take_count then
+            return nil
+        end
+    end
+
+    return shared_take_count
+end
+
 -- Collect items on non-source tracks that overlap the source region.
 local function collect_backing_items(source_item, region_start, region_end)
     local backing_items = {}
@@ -175,30 +223,44 @@ local function copy_backing_items_to_position(backing_items, take_start_pos)
     return true
 end
 
--- Paste one item per take in sequence, ensuring take numbering starts at 1.
-local function explode_takes_to_project_end(item, target_pos, region_start, region_end, backing_items)
-    local take_count = get_take_count(item)
-    local item_start = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-    local region_length = region_end - region_start
-    local comp_trim_start_delta = region_start - item_start
-
-    for take_number = 1, take_count do
-        local paste_pos = target_pos + ((take_number - 1) * region_length)
-        local pasted_item = duplicate_item_to_position(item, paste_pos)
+-- Copy all collected comp items to the requested take location.
+local function copy_comp_items_to_position(comp_items, take_number, take_start_pos)
+    for _, comp in ipairs(comp_items) do
+        local comp_target_pos = take_start_pos + comp.offset
+        local pasted_item = duplicate_item_to_position(comp.item, comp_target_pos)
 
         if not pasted_item then
-            reaper.ShowMessageBox("Failed to paste copied item.", "Error", 0)
+            reaper.ShowMessageBox("Failed to paste copied comp item.", "Error", 0)
             return false
         end
 
-        trim_duplicated_item(pasted_item, comp_trim_start_delta, region_length)
+        trim_duplicated_item(pasted_item, comp.trim_start_delta, comp.length)
 
         if not set_item_to_take_number(pasted_item, take_number) then
             reaper.ShowMessageBox("Failed to activate pasted take " .. take_number .. ".", "Error", 0)
             return false
         end
+    end
 
-        -- add_take_marker(pasted_item, take_number)
+    return true
+end
+
+-- Paste one region-length block per take, ensuring take numbering starts at 1.
+local function explode_takes_to_project_end(comp_items, target_pos, region_start, region_end, backing_items)
+    local take_count = get_shared_take_count(comp_items)
+    local region_length = region_end - region_start
+
+    if take_count == nil then
+        reaper.ShowMessageBox("Take numbers must be the same.", "Error", 0)
+        return false
+    end
+
+    for take_number = 1, take_count do
+        local paste_pos = target_pos + ((take_number - 1) * region_length)
+
+        if not copy_comp_items_to_position(comp_items, take_number, paste_pos) then
+            return false
+        end
 
         if not copy_backing_items_to_position(backing_items, paste_pos) then
             return false
@@ -220,12 +282,23 @@ local function main()
     local last_item_end = get_project_last_item_end()
     local target_pos = get_target_paste_position(last_item_end)
     local region_start, region_end = get_source_region(item)
+    local comp_items = collect_comp_items(item, region_start, region_end)
     local backing_items = collect_backing_items(item, region_start, region_end)
+
+    if #comp_items == 0 then
+        reaper.ShowMessageBox("No comp items found on the source track inside the region.", "Error", 0)
+        return
+    end
+
+    if get_shared_take_count(comp_items) == nil then
+        reaper.ShowMessageBox("Take numbers must be the same.", "Error", 0)
+        return
+    end
 
     reaper.Undo_BeginBlock()
     reaper.PreventUIRefresh(1)
 
-    local ok = explode_takes_to_project_end(item, target_pos, region_start, region_end, backing_items)
+    local ok = explode_takes_to_project_end(comp_items, target_pos, region_start, region_end, backing_items)
 
     reaper.PreventUIRefresh(-1)
     reaper.UpdateArrange()
