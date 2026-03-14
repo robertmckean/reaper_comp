@@ -85,6 +85,15 @@ local function trim_duplicated_item(item, trim_start_delta, new_length)
     reaper.UpdateItemInProject(item)
 end
 
+-- Remove fades from a duplicated comp item so contiguous takes join cleanly.
+local function clear_item_fades(item)
+    reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN", 0.0)
+    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0.0)
+    reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0.0)
+    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0.0)
+    reaper.UpdateItemInProject(item)
+end
+
 -- Return the selected time range, or fall back to the selected item's bounds.
 local function get_source_region(item)
     local time_sel_start, time_sel_end = reaper.GetSet_LoopTimeRange2(0, false, false, 0, 0, false)
@@ -263,6 +272,7 @@ local function copy_comp_items_to_position(comp_items, take_number, take_start_p
         end
 
         trim_duplicated_item(pasted_item, comp.trim_start_delta, comp.length)
+        clear_item_fades(pasted_item)
 
         if not set_item_to_take_number(pasted_item, take_number) then
             reaper.ShowMessageBox("Failed to activate pasted take " .. take_number .. ".", "Error", 0)
