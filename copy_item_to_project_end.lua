@@ -52,6 +52,17 @@ local function get_item_bounds(item)
     return start_pos, start_pos + length
 end
 
+-- Return a one-sample time tolerance for region-edge comparisons.
+local function get_sample_tolerance()
+    local sample_rate = reaper.GetSetProjectInfo(0, "PROJECT_SRATE", 0, false)
+
+    if sample_rate == nil or sample_rate <= 0 then
+        sample_rate = 48000
+    end
+
+    return 1.0 / sample_rate
+end
+
 -- Duplicate an item onto its source track at the requested position.
 local function duplicate_item_to_position(item, target_pos)
     local source_track = reaper.GetMediaItemTrack(item)
@@ -92,6 +103,13 @@ local function clear_item_fades(item)
     reaper.SetMediaItemInfo_Value(item, "D_FADEINLEN_AUTO", 0.0)
     reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN_AUTO", 0.0)
     reaper.UpdateItemInProject(item)
+end
+
+-- Preserve the original comp item color on the duplicated item.
+local function copy_item_color(source_item, target_item)
+    local color = reaper.GetMediaItemInfo_Value(source_item, "I_CUSTOMCOLOR")
+    reaper.SetMediaItemInfo_Value(target_item, "I_CUSTOMCOLOR", color)
+    reaper.UpdateItemInProject(target_item)
 end
 
 -- Return the selected time range, or fall back to the selected item's bounds.
@@ -165,7 +183,8 @@ end
 -- Return true when the item overlaps the requested region.
 local function item_overlaps_region(item, region_start, region_end)
     local item_start, item_end = get_item_bounds(item)
-    return item_start < region_end and item_end > region_start
+    local tolerance = get_sample_tolerance()
+    return item_start < (region_end - tolerance) and item_end > (region_start + tolerance)
 end
 
 -- Collect comp items on the source track that overlap the source region.
@@ -285,6 +304,8 @@ local function copy_comp_items_to_position(comp_items, take_number, take_start_p
             reaper.ShowMessageBox("Failed to activate pasted take " .. take_number .. ".", "Error", 0)
             return false
         end
+
+        copy_item_color(comp.item, pasted_item)
     end
 
     return true
