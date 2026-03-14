@@ -8,6 +8,43 @@ local function get_take_count(item)
     return reaper.CountTakes(item)
 end
 
+-- Return the number of usable takes on the media item.
+-- A usable take must have a media source.
+local function get_usable_take_count(item)
+    local usable_take_count = 0
+    local take_count = get_take_count(item)
+
+    for take_index = 0, take_count - 1 do
+        local take = reaper.GetMediaItemTake(item, take_index)
+
+        if take and reaper.GetMediaItemTake_Source(take) ~= nil then
+            usable_take_count = usable_take_count + 1
+        end
+    end
+
+    return usable_take_count
+end
+
+-- Return the Nth usable take (1-based), ignoring empty take slots.
+local function get_usable_take_by_number(item, usable_take_number)
+    local seen_usable_takes = 0
+    local take_count = get_take_count(item)
+
+    for take_index = 0, take_count - 1 do
+        local take = reaper.GetMediaItemTake(item, take_index)
+
+        if take and reaper.GetMediaItemTake_Source(take) ~= nil then
+            seen_usable_takes = seen_usable_takes + 1
+
+            if seen_usable_takes == usable_take_number then
+                return take
+            end
+        end
+    end
+
+    return nil
+end
+
 -- Return the item's start and end positions.
 local function get_item_bounds(item)
     local start_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
@@ -65,8 +102,8 @@ local function get_project_last_item_end()
     local max_end = 0.0
 
     for i = 0, item_count - 1 do
-        local item = reaper.GetMediaItem(0, i)
-        local _, end_pos = get_item_bounds(item)
+        local current_item = reaper.GetMediaItem(0, i)
+        local _, end_pos = get_item_bounds(current_item)
 
         if end_pos > max_end then
             max_end = end_pos
@@ -80,8 +117,6 @@ end
 -- This version assumes 4/4 and snaps to beat 1 of the next measure.
 local function get_next_measure_start_after_time(time_pos)
     local qn_at_time = reaper.TimeMap2_timeToQN(0, time_pos)
-
-    -- In 4/4, each measure is 4 quarter notes.
     local next_measure_qn = math.floor(qn_at_time / 4 + 1) * 4
     local next_measure_time = reaper.TimeMap2_QNToTime(0, next_measure_qn)
 
@@ -99,9 +134,9 @@ local function get_target_paste_position(last_item_end)
     return get_next_measure_start_after_time(minimum_time)
 end
 
--- Set the pasted item's active take to the requested 1-based take number.
+-- Set the pasted item's active take to the requested usable 1-based take number.
 local function set_item_to_take_number(item, take_number)
-    local take = reaper.GetMediaItemTake(item, take_number - 1)
+    local take = get_usable_take_by_number(item, take_number)
 
     if not take then
         return false
@@ -109,14 +144,6 @@ local function set_item_to_take_number(item, take_number)
 
     reaper.SetActiveTake(take)
     return true
-end
-
--- Add a marker at the start of the item using the requested take number.
-local function add_take_marker(item, take_number)
-    local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-    local marker_name = string.format("Take_%d", take_number)
-
-    reaper.AddProjectMarker2(0, false, item_pos, 0, marker_name, -1, 0)
 end
 
 -- Return true when the item overlaps the requested region.
@@ -143,7 +170,8 @@ local function collect_comp_items(source_item, region_start, region_end)
                 offset = overlap_start - region_start,
                 trim_start_delta = overlap_start - item_start,
                 length = overlap_end - overlap_start,
-                take_count = get_take_count(item)
+                take_count = get_take_count(item),
+                usable_take_count = get_usable_take_count(item)
             }
         end
     end
@@ -158,19 +186,19 @@ local function collect_comp_items(source_item, region_start, region_end)
     return comp_items
 end
 
--- Return the shared take count when all comp items match.
-local function get_shared_take_count(comp_items)
-    local shared_take_count = nil
+-- Return the shared usable take count when all comp items match.
+local function get_shared_usable_take_count(comp_items)
+    local shared_usable_take_count = nil
 
     for _, comp in ipairs(comp_items) do
-        if shared_take_count == nil then
-            shared_take_count = comp.take_count
-        elseif comp.take_count ~= shared_take_count then
+        if shared_usable_take_count == nil then
+            shared_usable_take_count = comp.usable_take_count
+        elseif comp.usable_take_count ~= shared_usable_take_count then
             return nil
         end
     end
 
-    return shared_take_count
+    return shared_usable_take_count
 end
 
 -- Collect items on non-source tracks that overlap the source region.
@@ -245,9 +273,9 @@ local function copy_comp_items_to_position(comp_items, take_number, take_start_p
     return true
 end
 
--- Paste one region-length block per take, ensuring take numbering starts at 1.
+-- Paste one region-length block per usable take, ensuring take numbering starts at 1.
 local function explode_takes_to_project_end(comp_items, target_pos, region_start, region_end, backing_items)
-    local take_count = get_shared_take_count(comp_items)
+    local take_count = get_shared_usable_take_count(comp_items)
     local region_length = region_end - region_start
 
     if take_count == nil then
@@ -279,8 +307,6 @@ local function main()
         return
     end
 
-    local last_item_end = get_project_last_item_end()
-    local target_pos = get_target_paste_position(last_item_end)
     local region_start, region_end = get_source_region(item)
     local comp_items = collect_comp_items(item, region_start, region_end)
     local backing_items = collect_backing_items(item, region_start, region_end)
@@ -290,10 +316,13 @@ local function main()
         return
     end
 
-    if get_shared_take_count(comp_items) == nil then
+    if get_shared_usable_take_count(comp_items) == nil then
         reaper.ShowMessageBox("Take numbers must be the same.", "Error", 0)
         return
     end
+
+    local last_item_end = get_project_last_item_end()
+    local target_pos = get_target_paste_position(last_item_end)
 
     reaper.Undo_BeginBlock()
     reaper.PreventUIRefresh(1)
