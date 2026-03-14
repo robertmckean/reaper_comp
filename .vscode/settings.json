@@ -1,0 +1,8 @@
+{
+    "Lua.runtime.version": "Lua 5.4",
+    "Lua.diagnostics.globals": [
+        "reaper"
+    ],
+    "Lua.workspace.checkThirdParty": false,
+    "Lua.hint.enable": true
+}
