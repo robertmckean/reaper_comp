@@ -143,6 +143,13 @@ local function get_target_paste_position(last_item_end)
     return get_next_measure_start_after_time(minimum_time)
 end
 
+-- Return the region length in quarter notes so repeated blocks stay on the grid.
+local function get_region_length_qn(region_start, region_end)
+    local region_start_qn = reaper.TimeMap2_timeToQN(0, region_start)
+    local region_end_qn = reaper.TimeMap2_timeToQN(0, region_end)
+    return region_end_qn - region_start_qn
+end
+
 -- Set the pasted item's active take to the requested usable 1-based take number.
 local function set_item_to_take_number(item, take_number)
     local take = get_usable_take_by_number(item, take_number)
@@ -286,7 +293,8 @@ end
 -- Paste one region-length block per usable take, ensuring take numbering starts at 1.
 local function explode_takes_to_project_end(comp_items, target_pos, region_start, region_end, backing_items)
     local take_count = get_shared_usable_take_count(comp_items)
-    local region_length = region_end - region_start
+    local region_length_qn = get_region_length_qn(region_start, region_end)
+    local target_qn = reaper.TimeMap2_timeToQN(0, target_pos)
 
     if take_count == nil then
         reaper.ShowMessageBox("Take numbers must be the same.", "Error", 0)
@@ -294,7 +302,8 @@ local function explode_takes_to_project_end(comp_items, target_pos, region_start
     end
 
     for take_number = 1, take_count do
-        local paste_pos = target_pos + ((take_number - 1) * region_length)
+        local paste_qn = target_qn + ((take_number - 1) * region_length_qn)
+        local paste_pos = reaper.TimeMap2_QNToTime(0, paste_qn)
 
         if not copy_comp_items_to_position(comp_items, take_number, paste_pos) then
             return false
