@@ -1,3 +1,9 @@
+-- @description Copy selected item to project end
+-- @version 0.2.4
+-- @author windo
+-- @changelog
+--   Match script metadata header version to repository release version
+
 -- Return the first selected media item, or nil if none is selected.
 local function get_selected_item()
     return reaper.GetSelectedMediaItem(0, 0)
